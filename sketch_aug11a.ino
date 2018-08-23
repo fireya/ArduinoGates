@@ -1,5 +1,7 @@
 #include <Automaton.h>
 #include <RCSwitch.h>
+#include <Array.h>
+#include "ACS712.h"
 
 class Atm_leaf : public Machine {
 
@@ -10,24 +12,20 @@ class Atm_leaf : public Machine {
     short pin_close;
 
     enum { IDLE, OPENING, CLOSING, OPENED, CLOSED, OPEN_WAIT, CLOSE_WAIT }; // STATES
-    enum { EVT_OPENING_TIMER, EVT_CLOSE_TIMER, EVT_OPEN_TIMER, EVT_CLOSED, EVT_OPENED, EVT_STOP, EVT_TOGGLE, ELSE }; // EVENTS
+    enum { EVT_CLOSE_TIMER, EVT_OPEN_TIMER, EVT_CLOSED, EVT_OPENED, EVT_STOP, EVT_TOGGLE, ELSE }; // EVENTS
     enum { ENT_IDLE, ENT_OPENING, ENT_CLOSING, ENT_OPENED, ENT_CLOSED }; // ACTIONS
 
-    Atm_comparator cmpE1;
-    uint16_t avgbufferE1[10];
 
-    Atm_comparator cmpE2;
-    uint16_t avgbufferE2[10];
+    float closeCurrent = 2.0;
+    float standbyCurrent = 0.1;
+    float openCurrent = 0.0;
+    ACS712 *sensor;
 
-    Atm_comparator cmpI1;
-    uint16_t avgbufferI1[10];
+    unsigned long last_moving_time;
+    unsigned long last_closing_time;
+    unsigned long last_opening_time;
 
-    Atm_comparator cmpI2;
-    uint16_t avgbufferI2[10];
-
-    uint16_t closeForce = 700;
-
-    atm_timer_millis open_timer, close_timer, opening_timer;
+    atm_timer_millis open_timer, close_timer;
 
     Atm_leaf & setOpenDelay(int seconds) {
       open_timer.set(seconds * 1000);
@@ -39,8 +37,13 @@ class Atm_leaf : public Machine {
       return *this;
     }
 
-    Atm_leaf & setCloseForce(uint16_t force) {
-      this->closeForce = force;
+    Atm_leaf & setCloseForce(float force) {
+      this->closeCurrent = force;
+      return *this;
+    }
+
+    Atm_leaf & setOpenForce(float force) {
+      this->openCurrent = force;
       return *this;
     }
 
@@ -48,47 +51,19 @@ class Atm_leaf : public Machine {
     {
       // clang-format off
       const static state_t state_table[] PROGMEM = {
-        /*                  ON_ENTER  ON_LOOP  ON_EXIT  EVT_OPENING_TIMER  EVT_CLOSE_TIMER  EVT_OPEN_TIMER  EVT_CLOSED  EVT_OPENED  EVT_STOP  EVT_TOGGLE  ELSE */
-        /*       IDLE */    ENT_IDLE,      -1,      -1,                -1,              -1,             -1,         -1,         -1,       -1,  OPEN_WAIT,   -1,
-        /*    OPENING */ ENT_OPENING,      -1,      -1,            OPENED,              -1,             -1,         -1,     OPENED,     IDLE,         -1,   -1,
-        /*    CLOSING */ ENT_CLOSING,      -1,      -1,                -1,              -1,             -1,     CLOSED,         -1,     IDLE,         -1,   -1,
-        /*     OPENED */  ENT_OPENED,      -1,      -1,                -1,              -1,             -1,         -1,         -1,       -1, CLOSE_WAIT,   -1,
-        /*     CLOSED */  ENT_CLOSED,      -1,      -1,                -1,              -1,             -1,         -1,         -1,       -1,    OPENING,   -1,
-        /*  OPEN_WAIT */          -1,      -1,      -1,                -1,              -1,        OPENING,         -1,         -1,     IDLE,         -1,   -1,
-        /* CLOSE_WAIT */          -1,      -1,      -1,                -1,         CLOSING,             -1,         -1,         -1,     IDLE,         -1,   -1,
+        /*                  ON_ENTER  ON_LOOP  ON_EXIT   EVT_CLOSE_TIMER  EVT_OPEN_TIMER  EVT_CLOSED  EVT_OPENED  EVT_STOP  EVT_TOGGLE  ELSE */
+        /*       IDLE */    ENT_IDLE,      -1,      -1,               -1,             -1,         -1,         -1,       -1,  OPEN_WAIT,   -1,
+        /*    OPENING */ ENT_OPENING,      -1,      -1,               -1,             -1,         -1,     OPENED,     IDLE,         -1,   -1,
+        /*    CLOSING */ ENT_CLOSING,      -1,      -1,               -1,             -1,     CLOSED,         -1,     IDLE,         -1,   -1,
+        /*     OPENED */  ENT_OPENED,      -1,      -1,               -1,             -1,         -1,         -1,       -1, CLOSE_WAIT,   -1,
+        /*     CLOSED */  ENT_CLOSED,      -1,      -1,               -1,             -1,         -1,         -1,       -1,    OPENING,   -1,
+        /*  OPEN_WAIT */          -1,      -1,      -1,               -1,        OPENING,         -1,         -1,     IDLE,         -1,   -1,
+        /* CLOSE_WAIT */          -1,      -1,      -1,          CLOSING,             -1,         -1,         -1,     IDLE,         -1,   -1,
       };
       // clang-format on
       Machine::begin( state_table, ELSE );
-      opening_timer.set(60000);
-
-      static uint16_t threshold_list_E1[] = { closeForce };
-
-      cmpE1.begin( acsPin, 50 )
-      .threshold( threshold_list_E1, sizeof( threshold_list_E1 ) )
-      .average( avgbufferE1, sizeof( avgbufferE1 ) )
-      .onChange(true, *this, EVT_CLOSED);
-
-      static uint16_t threshold_list_E2[] = { 200 };
-
-      cmpE2.begin( acsPin, 50 )
-      .threshold( threshold_list_E2, sizeof( threshold_list_E2 ) )
-      .average( avgbufferE2, sizeof( avgbufferE2 ) )
-      .onChange(false, *this, EVT_STOP);
-
-      static uint16_t threshold_list_I1[] = { 500 };
-
-      cmpI1.begin( acsPin, 50 )
-      .threshold( threshold_list_I1, sizeof( threshold_list_I1 ) )
-      .average( avgbufferI1, sizeof( avgbufferI1 ) )
-      .onChange(true, *this, EVT_OPENED);
-
-      static uint16_t threshold_list_I2[] = { 530 };
-
-      cmpI2.begin( acsPin, 50 )
-      .threshold( threshold_list_I2, sizeof( threshold_list_I2 ) )
-      .average( avgbufferI2, sizeof( avgbufferI2 ) )
-      .onChange(false, *this, EVT_STOP);
-
+      sensor = new ACS712(ACS712_05B, acsPin);
+      sensor->calibrate();
       pin_open = openPin;
       pin_close = closePin;
       pinMode( pin_open, OUTPUT );
@@ -96,18 +71,43 @@ class Atm_leaf : public Machine {
       return *this;
     }
 
-    int Atm_leaf::event( int id ) {
+    unsigned long last_measure_time;
+    unsigned long last_measured_value;
+    float measureCurrent() {
+      if (millis() - last_measure_time > 100)
+      {
+        last_measure_time = millis();
+        last_measured_value = sensor->getCurrentDC();
+        Serial.println(last_measured_value);
+      }
+      return last_measured_value;
+    }
+
+    int event( int id ) {
       switch ( id ) {
-        case EVT_OPENING_TIMER:
-          return opening_timer.expired(this);
         case EVT_CLOSE_TIMER:
           return close_timer.expired(this);
         case EVT_OPEN_TIMER:
           return open_timer.expired(this);
         case EVT_CLOSED:
-          return 0;
+          if (abs(measureCurrent()) < closeCurrent) {
+            last_closing_time = millis();
+          }
+          return millis() - last_closing_time > 1000;
         case EVT_OPENED:
-          return 0;
+          if (openCurrent <= 0.0) {
+            if (abs(measureCurrent()) > standbyCurrent) {
+              last_moving_time = millis();
+            }
+            return millis() - last_moving_time > 4000;
+          }
+          else {
+            if (abs(measureCurrent()) < closeCurrent) {
+              last_opening_time = millis();
+            }
+            return millis() - last_opening_time > 1000;
+
+          }
         case EVT_STOP:
           return 0;
         case EVT_TOGGLE:
@@ -116,7 +116,7 @@ class Atm_leaf : public Machine {
       return 0;
     }
 
-    void Atm_leaf::action( int id ) {
+    void action( int id ) {
       //Serial.println(id);
       switch ( id ) {
         case ENT_IDLE:
@@ -124,12 +124,11 @@ class Atm_leaf : public Machine {
           digitalWrite(pin_close, HIGH);
           return;
         case ENT_OPENING:
-
           digitalWrite(pin_open, HIGH);
           digitalWrite(pin_close, LOW);
+          last_moving_time = millis();
           return;
         case ENT_CLOSING:
-
           digitalWrite(pin_open, LOW);
           digitalWrite(pin_close, HIGH);
           return;
@@ -143,27 +142,27 @@ class Atm_leaf : public Machine {
           return;
       }
     }
-    Atm_leaf& Atm_leaf::closed() {
+    Atm_leaf& closed() {
       trigger( EVT_CLOSED );
       return *this;
     }
 
-    Atm_leaf& Atm_leaf::opened() {
+    Atm_leaf& opened() {
       trigger( EVT_OPENED );
       return *this;
     }
 
-    Atm_leaf& Atm_leaf::stop() {
+    Atm_leaf& stop() {
       trigger( EVT_STOP );
       return *this;
     }
 
-    Atm_leaf& Atm_leaf::toggle() {
+    Atm_leaf& toggle() {
       trigger( EVT_TOGGLE );
       return *this;
     }
 
-    Atm_leaf& Atm_leaf::trace( Stream & stream ) {
+    Atm_leaf& trace( Stream & stream ) {
       Machine::setTrace( &stream, atm_serial_debug::trace,
                          "LEAF\0EVT_STOP\0EVT_CLOSE\0EVT_OPEN\0ELSE\0IDLE\0OPENING\0CLOSING" );
       return *this;
@@ -181,31 +180,31 @@ void setup() {
   rightLeafG
   .setOpenDelay(0)
   .setCloseDelay(7)
-  .setCloseForce(800)
+  .setCloseForce(3)
   .begin(22, 23, A8)
   .trace(Serial);
 
   leftLeafG
   .setOpenDelay(0)
   .setCloseDelay(0)
-  .setCloseForce(800)
+  .setCloseForce(3)
   .begin(24, 25, A9)
   .trace(Serial);
-  
+
   rightLeafU
   .setOpenDelay(0)
-  .setCloseDelay(2)
-  .setCloseForce(590)
+  .setCloseDelay(5)
+  .setCloseForce(1.7)
   .begin(26, 27, A10)
   .trace(Serial);
-  
+
   leftLeafU
   .setOpenDelay(5)
   .setCloseDelay(0)
-  .setCloseForce(590)
+  .setCloseForce(1.7)
   .begin(28, 29, A11)
   .trace(Serial);
-  
+
   receiver.enableReceive(digitalPinToInterrupt(21));
   sender.enableTransmit(6);
   sender.setProtocol(1);
@@ -224,7 +223,6 @@ void loop() {
   if (receiver.available()) {
     unsigned long data = receiver.getReceivedValue();
 
-    Serial.print(data);
     if (data == 31010101)
     {
       rightLeafG.toggle();
@@ -242,9 +240,12 @@ void loop() {
       rightLeafU.stop();
       leftLeafU.stop();
     }
-
     receiver.resetAvailable();
+
+
+
   }
   //Serial.println(analogRead(9));
-  //delay(500);
+
+  //sender.send(31010103,25);
 }
