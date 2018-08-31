@@ -16,9 +16,9 @@ class Atm_leaf : public Machine {
     enum { ENT_IDLE, ENT_OPENING, ENT_CLOSING, ENT_OPENED, ENT_CLOSED }; // ACTIONS
 
 
-    float closeCurrent = 2.0;
-    float standbyCurrent = 0.1;
-    float openCurrent = 0.0;
+    float closeCurrent = 3.0;
+    float standbyCurrent = 0.5;
+    float openCurrent = 2.0;
     ACS712 *sensor;
 
     unsigned long last_moving_time;
@@ -56,23 +56,29 @@ class Atm_leaf : public Machine {
         /*    OPENING */ ENT_OPENING,      -1,      -1,               -1,             -1,         -1,     OPENED,     IDLE,         -1,   -1,
         /*    CLOSING */ ENT_CLOSING,      -1,      -1,               -1,             -1,     CLOSED,         -1,     IDLE,         -1,   -1,
         /*     OPENED */  ENT_OPENED,      -1,      -1,               -1,             -1,         -1,         -1,       -1, CLOSE_WAIT,   -1,
-        /*     CLOSED */  ENT_CLOSED,      -1,      -1,               -1,             -1,         -1,         -1,       -1,    OPENING,   -1,
+        /*     CLOSED */  ENT_CLOSED,      -1,      -1,               -1,             -1,         -1,         -1,       -1,  OPEN_WAIT,   -1,
         /*  OPEN_WAIT */          -1,      -1,      -1,               -1,        OPENING,         -1,         -1,     IDLE,         -1,   -1,
         /* CLOSE_WAIT */          -1,      -1,      -1,          CLOSING,             -1,         -1,         -1,     IDLE,         -1,   -1,
       };
       // clang-format on
       Machine::begin( state_table, ELSE );
       sensor = new ACS712(ACS712_05B, acsPin);
-      sensor->calibrate();
+      
       pin_open = openPin;
       pin_close = closePin;
+
+      digitalWrite(pin_open, HIGH);
+      digitalWrite(pin_close, HIGH);
       pinMode( pin_open, OUTPUT );
       pinMode( pin_close, OUTPUT );
+      delay(100);
+      sensor->calibrate();
+      
       return *this;
     }
 
     unsigned long last_measure_time;
-    unsigned long last_measured_value;
+    float last_measured_value;
     float measureCurrent() {
       if (millis() - last_measure_time > 100)
       {
@@ -90,24 +96,21 @@ class Atm_leaf : public Machine {
         case EVT_OPEN_TIMER:
           return open_timer.expired(this);
         case EVT_CLOSED:
+          if (abs(measureCurrent()) > standbyCurrent) {
+            last_moving_time = millis();
+          }          
           if (abs(measureCurrent()) < closeCurrent) {
             last_closing_time = millis();
           }
-          return millis() - last_closing_time > 1000;
+          return (millis() - last_closing_time > 1000) || (millis() - last_moving_time > 4000);
         case EVT_OPENED:
-          if (openCurrent <= 0.0) {
-            if (abs(measureCurrent()) > standbyCurrent) {
-              last_moving_time = millis();
-            }
-            return millis() - last_moving_time > 4000;
+          if (abs(measureCurrent()) > standbyCurrent) {
+            last_moving_time = millis();
           }
-          else {
-            if (abs(measureCurrent()) < closeCurrent) {
-              last_opening_time = millis();
-            }
-            return millis() - last_opening_time > 1000;
-
+          if (abs(measureCurrent()) < closeCurrent) {
+            last_opening_time = millis();
           }
+          return (millis() - last_opening_time > 1000) || (millis() - last_moving_time > 4000);
         case EVT_STOP:
           return 0;
         case EVT_TOGGLE:
@@ -131,6 +134,7 @@ class Atm_leaf : public Machine {
         case ENT_CLOSING:
           digitalWrite(pin_open, LOW);
           digitalWrite(pin_close, HIGH);
+          last_moving_time = millis();
           return;
         case ENT_OPENED:
           digitalWrite(pin_open, HIGH);
@@ -173,6 +177,8 @@ Atm_leaf rightLeafG;
 Atm_leaf leftLeafG;
 Atm_leaf rightLeafU;
 Atm_leaf leftLeafU;
+Atm_leaf rightLeafU2;
+Atm_leaf leftLeafU2;
 RCSwitch sender = RCSwitch();
 RCSwitch receiver = RCSwitch();
 
@@ -194,15 +200,29 @@ void setup() {
   rightLeafU
   .setOpenDelay(0)
   .setCloseDelay(5)
-  .setCloseForce(1.7)
+  .setCloseForce(3)
   .begin(26, 27, A10)
   .trace(Serial);
 
   leftLeafU
   .setOpenDelay(5)
   .setCloseDelay(0)
-  .setCloseForce(1.7)
+  .setCloseForce(3)
   .begin(28, 29, A11)
+  .trace(Serial);
+
+  rightLeafU2
+  .setOpenDelay(5)
+  .setCloseDelay(0)
+  .setCloseForce(2)
+  .begin(31, 30, A12)
+  .trace(Serial);
+
+  leftLeafU2
+  .setOpenDelay(0)
+  .setCloseDelay(5)
+  .setCloseForce(2)
+  .begin(32, 33, A13)
   .trace(Serial);
 
   receiver.enableReceive(digitalPinToInterrupt(21));
@@ -223,6 +243,9 @@ void loop() {
   if (receiver.available()) {
     unsigned long data = receiver.getReceivedValue();
 
+    //Serial.println(data);
+    //receiver.resetAvailable();
+    //return;
     if (data == 31010101)
     {
       rightLeafG.toggle();
@@ -233,19 +256,24 @@ void loop() {
       rightLeafU.toggle();
       leftLeafU.toggle();
     }
+    if (data == 31010103)
+    {
+      rightLeafU2.toggle();
+      leftLeafU2.toggle();
+    }
     if (data == 31010100)
     {
       rightLeafG.stop();
       leftLeafG.stop();
       rightLeafU.stop();
       leftLeafU.stop();
+      rightLeafU2.stop();
+      leftLeafU2.stop();
     }
     receiver.resetAvailable();
-
-
 
   }
   //Serial.println(analogRead(9));
 
-  //sender.send(31010103,25);
+  //sender.send(64902,16);
 }
