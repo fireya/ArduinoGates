@@ -188,13 +188,16 @@ RCSwitch sender = RCSwitch();
 RCSwitch receiver = RCSwitch();
 
 void setup() {
-  led.begin(4);
+  digitalWrite(34,HIGH);
+  digitalWrite(35,HIGH);
+  led.begin(34);
   lightSensor.begin( A14, 5000 )
   .average( avgbuffer, 10 )
   .onChange( []( int idx, int v, int up ) {
-    if (v > 500 && up) led.on();
-    else if (v < 300 && !up) led.off();
-  });;
+    if (v > 500 && up) led.off();
+    else if (v < 300 && !up) led.on();
+  })
+  .trace(Serial);
 
   rightLeafG
   .setOpenDelay(0)
@@ -253,10 +256,11 @@ void setup() {
 
 void loop() {
   automaton.run();
-  if (led.state() == led.ON && millis() - led.state_millis > 10000)
+  if (led.state() == led.ON && millis() - led.state_millis > 14400000)
   {
-    led.off();
+    led.on();
   }
+  Serial.println(analogRead(A14));
   if (receiver.available()) {
     unsigned long data = receiver.getReceivedValue();
 
@@ -267,19 +271,19 @@ void loop() {
     {
       rightLeafG.toggle();
       leftLeafG.toggle();
-      led.on();
+      led.off();
     }
     if (data == 31010102)
     {
       rightLeafU.toggle();
       leftLeafU.toggle();
-      led.on();
+      led.off();
     }
     if (data == 31010103)
     {
       rightLeafU2.toggle();
       leftLeafU2.toggle();
-      led.on();
+      led.off();
     }
     if (data == 31010100)
     {
@@ -289,7 +293,7 @@ void loop() {
       leftLeafU.stop();
       rightLeafU2.stop();
       leftLeafU2.stop();
-      led.on();
+      led.off();
     }
     receiver.resetAvailable();
 
