@@ -63,7 +63,7 @@ class Atm_leaf : public Machine {
       // clang-format on
       Machine::begin( state_table, ELSE );
       sensor = new ACS712(ACS712_05B, acsPin);
-      
+
       pin_open = openPin;
       pin_close = closePin;
 
@@ -73,7 +73,7 @@ class Atm_leaf : public Machine {
       pinMode( pin_close, OUTPUT );
       delay(100);
       sensor->calibrate();
-      
+
       return *this;
     }
 
@@ -98,7 +98,7 @@ class Atm_leaf : public Machine {
         case EVT_CLOSED:
           if (abs(measureCurrent()) > standbyCurrent) {
             last_moving_time = millis();
-          }          
+          }
           if (abs(measureCurrent()) < closeCurrent) {
             last_closing_time = millis();
           }
@@ -179,10 +179,23 @@ Atm_leaf rightLeafU;
 Atm_leaf leftLeafU;
 Atm_leaf rightLeafU2;
 Atm_leaf leftLeafU2;
+
+Atm_led led;
+Atm_analog lightSensor;
+uint16_t avgbuffer[10];
+
 RCSwitch sender = RCSwitch();
 RCSwitch receiver = RCSwitch();
 
 void setup() {
+  led.begin(4);
+  lightSensor.begin( A14, 5000 )
+  .average( avgbuffer, 10 )
+  .onChange( []( int idx, int v, int up ) {
+    if (v > 500 && up) led.on();
+    else if (v < 300 && !up) led.off();
+  });;
+
   rightLeafG
   .setOpenDelay(0)
   .setCloseDelay(7)
@@ -240,6 +253,10 @@ void setup() {
 
 void loop() {
   automaton.run();
+  if (led.state() == led.ON && millis() - led.state_millis > 10000)
+  {
+    led.off();
+  }
   if (receiver.available()) {
     unsigned long data = receiver.getReceivedValue();
 
@@ -250,16 +267,19 @@ void loop() {
     {
       rightLeafG.toggle();
       leftLeafG.toggle();
+      led.on();
     }
     if (data == 31010102)
     {
       rightLeafU.toggle();
       leftLeafU.toggle();
+      led.on();
     }
     if (data == 31010103)
     {
       rightLeafU2.toggle();
       leftLeafU2.toggle();
+      led.on();
     }
     if (data == 31010100)
     {
@@ -269,6 +289,7 @@ void loop() {
       leftLeafU.stop();
       rightLeafU2.stop();
       leftLeafU2.stop();
+      led.on();
     }
     receiver.resetAvailable();
 
