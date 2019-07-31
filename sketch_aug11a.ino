@@ -1,6 +1,5 @@
 #include <Automaton.h>
 #include <RCSwitch.h>
-#include <Array.h>
 #include "ACS712.h"
 
 class Atm_leaf : public Machine {
@@ -17,8 +16,8 @@ class Atm_leaf : public Machine {
 
 
     float closeCurrent = 3.0;
-    float standbyCurrent = 0.5;
-    float openCurrent = 2.0;
+    float standbyCurrent = 0.3;
+    float zeroCurrent = 0.3;
     ACS712 *sensor;
 
     unsigned long last_moving_time;
@@ -42,8 +41,8 @@ class Atm_leaf : public Machine {
       return *this;
     }
 
-    Atm_leaf & setOpenForce(float force) {
-      this->openCurrent = force;
+    Atm_leaf & setZeroForce(float force) {
+      this->zeroCurrent = force;
       return *this;
     }
 
@@ -83,7 +82,7 @@ class Atm_leaf : public Machine {
       if (millis() - last_measure_time > 100)
       {
         last_measure_time = millis();
-        last_measured_value = sensor->getCurrentDC();
+        last_measured_value = sensor->getCurrentDC()-this->zeroCurrent;
         Serial.println(last_measured_value);
       }
       return last_measured_value;
@@ -206,6 +205,7 @@ void setup() {
   .setOpenDelay(0)
   .setCloseDelay(7)
   .setCloseForce(3)
+  .setZeroForce(0.4)
   .begin(22, 23, A8)
   .trace(Serial);
 
@@ -213,6 +213,7 @@ void setup() {
   .setOpenDelay(0)
   .setCloseDelay(0)
   .setCloseForce(3)
+  .setZeroForce(0.3)
   .begin(24, 25, A9)
   .trace(Serial);
 
